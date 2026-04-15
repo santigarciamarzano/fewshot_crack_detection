@@ -1,0 +1,63 @@
+# ─── Datasets pesados ────────────────────────────────────────────────────────
+data/
+data_patches/
+raw/
+
+# ─── Scripts de preparación de datos (mover a otro dir en el futuro) ─────────
+patch_dataset.py
+prepare_dataset.py
+
+# ─── Checkpoints / pesos del modelo ──────────────────────────────────────────
+checkpoints/
+
+# ─── Resultados de inferencia generados ──────────────────────────────────────
+results/
+output.log
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ─── Entornos virtuales ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Jupyter ─────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Tests cache ─────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Editores ────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── SO ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Archivos grandes de imagen / binarios sueltos ───────────────────────────
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+
+# ─── Directorios sin utilidad ───────────────────────────────────────────────
+paper/
