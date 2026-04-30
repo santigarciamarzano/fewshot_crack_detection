@@ -1,16 +1,14 @@
 """
 train.py
 
-Entry point for training the few-shot segmentation model.
+Punto de entrada para entrenar el modelo de segmentación few-shot.
+Instancia todos los componentes desde la config y lanza el loop de entrenamiento.
 
-Instantiates all components from config and launches the training loop.
-This script has no logic of its own — it only wires components together.
-
-Usage:
-    python train.py                        # baseline config
-    python train.py --backbone resnet50    # override backbone
-    python train.py --epochs 200           # override epochs
-    python train.py --data data/custom/    # override data root
+Uso:
+    python train.py                        # config baseline
+    python train.py --backbone resnet50    # cambiar backbone
+    python train.py --epochs 200           # cambiar épocas
+    python train.py --data data/custom/    # cambiar ruta de datos
 """
 
 import argparse
@@ -29,11 +27,7 @@ from training.trainer import Trainer
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line overrides for the most commonly changed settings.
-
-    All other settings are controlled via the config object directly.
-    Add new arguments here only if they need to be overridable from CLI.
-    """
+    """Parsea los argumentos de línea de comandos para los ajustes más comunes."""
     parser = argparse.ArgumentParser(description="Train few-shot crack segmentation model.")
 
     parser.add_argument("--backbone",  type=str,   default=None, help="resnet18 | resnet34 | resnet50 | resnet101")
@@ -50,17 +44,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def apply_overrides(cfg: FewShotConfig, args: argparse.Namespace) -> FewShotConfig:
-    """Apply CLI argument overrides to the config object.
-
-    Only overrides values that were explicitly passed — None means "use config default".
-
-    Args:
-        cfg:  Base config to modify.
-        args: Parsed CLI arguments.
-
-    Returns:
-        Modified config object.
-    """
+    """Aplica los argumentos de CLI sobre el objeto config. Solo sobreescribe los que se pasaron explícitamente."""
+    # Args con valor None significan "usar el default de la config"
     if args.backbone is not None:
         cfg.encoder.backbone = args.backbone
     if args.epochs is not None:
@@ -80,11 +65,7 @@ def apply_overrides(cfg: FewShotConfig, args: argparse.Namespace) -> FewShotConf
 
 
 def set_seed(seed: int) -> None:
-    """Set random seeds for reproducibility across Python, NumPy, and PyTorch.
-
-    Args:
-        seed: Integer seed value from cfg.training.seed.
-    """
+    """Fija las semillas aleatorias en Python, NumPy y PyTorch para reproducibilidad."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -93,36 +74,23 @@ def set_seed(seed: int) -> None:
 
 
 def build_dataloader(cfg: FewShotConfig, split: str, workers: int) -> DataLoader:
-    """Instantiate EpisodicDataset and wrap it in a DataLoader.
-
-    Args:
-        cfg:     Root config — dataset settings read from cfg.dataset.
-        split:   "train" or "val".
-        workers: Number of parallel workers for data loading.
-
-    Returns:
-        DataLoader yielding batches of episodes.
-    """
+    """Crea el EpisodicDataset y lo envuelve en un DataLoader."""
     dataset = EpisodicDatasetPNG(cfg.dataset, split=split)
 
     return DataLoader(
         dataset,
         batch_size=cfg.training.batch_size,
-        shuffle=(split == "train"),  # shuffle only for training
+        shuffle=(split == "train"),
         num_workers=workers,
-        pin_memory=(cfg.training.device == "cuda"),  # faster GPU transfer
-        drop_last=(split == "train"),  # avoid incomplete batches during training
+        pin_memory=(cfg.training.device == "cuda"),
+        drop_last=(split == "train"),
     )
 
 
 def main() -> None:
     args = parse_args()
-
-    # Build config and apply CLI overrides
     cfg = get_baseline_config()
     cfg = apply_overrides(cfg, args)
-
-    # Reproducibility
     set_seed(cfg.training.seed)
 
     print(f"Experiment: {cfg.experiment_name}")
@@ -133,7 +101,6 @@ def main() -> None:
     print(f"Epochs:     {cfg.training.epochs}")
     print()
 
-    # Data
     train_loader = build_dataloader(cfg, split="train", workers=args.workers)
     val_loader   = build_dataloader(cfg, split="val",   workers=args.workers)
 
@@ -141,14 +108,11 @@ def main() -> None:
     print(f"Val episodes:   {len(val_loader.dataset)}")
     print()
 
-    # Model
     model = FewShotModel(cfg)
-
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable parameters: {n_params:,}")
     print()
 
-    # Train
     trainer = Trainer(model, cfg, train_loader, val_loader)
     trainer.fit()
 

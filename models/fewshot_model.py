@@ -1,22 +1,18 @@
 """
 models/fewshot_model.py
 
-Full few-shot segmentation model.
+Modelo completo de segmentación few-shot.
 
-Assembles the encoder, prototype module, similarity module, and decoder
-into a single end-to-end model. This module contains no logic of its own —
-its only responsibility is to orchestrate the forward pass in the correct order.
+Ensambla el encoder, el módulo de prototipos, el módulo de similitud y el decoder
+en un único modelo end-to-end. El encoder es Siamés: support y query comparten pesos.
 
-Data flow:
+Flujo de datos:
     support_img  → encoder → layer4 → PrototypeModule → proto_crack, proto_bg
-    query_img    → encoder → layer4 → SimilarityModule (+ prototypes) → sim_map
+    query_img    → encoder → layer4 → SimilarityModule (+ prototipos) → sim_map
                           → layer1..layer3 → skip connections
-    cat(query layer4, sim_map) → UNetDecoder (+ skips) → mask logits
+    cat(query layer4, sim_map) → UNetDecoder (+ skips) → logits de máscara
 
-The encoder is Siamese: support and query share the exact same weights.
-Loss is computed externally — this module returns raw logits only.
-
-Shapes (baseline: ResNet34, 256×256 input):
+Shapes (baseline: ResNet34, entrada 256×256):
     support_img:   B × 3 × 256 × 256
     support_mask:  B × 1 × 256 × 256
     query_img:     B × 3 × 256 × 256
@@ -34,42 +30,29 @@ from models.fewshot.similarity import SimilarityModule
 from models.decoders.unet_decoder import UNetDecoder
 
 class FewShotModel(nn.Module):
-    """End-to-end few-shot segmentation model.
+    """Modelo de segmentación few-shot end-to-end.
 
-    Composes encoder, prototype, similarity, and decoder modules.
-    The encoder is shared (Siamese) between support and query branches.
+    Combina encoder (Siamés), módulo de prototipos, módulo de similitud y decoder.
 
     Args:
-        cfg: FewShotConfig root config object. All sub-configs are read
-             from here — no values are hardcoded in this class.
+        cfg: Objeto FewShotConfig raíz. Todos los sub-configs se leen desde aquí.
 
-    Example:
+    Ejemplo:
         cfg = get_baseline_config()
         model = FewShotModel(cfg)
-
-        logits = model(support_img, support_mask, query_img)
-        # logits: B × 1 × 256 × 256
-
-        probs = torch.sigmoid(logits)   # for inference
+        logits = model(support_img, support_mask, query_img)  # B × 1 × 256 × 256
     """
 
     def __init__(self, cfg: FewShotConfig) -> None:
         super().__init__()
 
-        # --- Encoder (Siamese — shared between support and query) ----------
-        self.encoder = build_encoder(cfg.encoder)
-
-        # --- Few-shot branch -----------------------------------------------
+        self.encoder   = build_encoder(cfg.encoder)
         self.prototype = PrototypeModule(cfg.prototype)
         self.similarity = SimilarityModule(cfg.similarity)
 
-        # --- Decoder ---------------------------------------------------------
-        # bottleneck_channels: layer4 output channels + 2 similarity channels.
-        # skip_channels: fixed by backbone architecture, not by config.
-
-        backbone = cfg.encoder.backbone
+        # bottleneck = layer4 channels + 2 canales del mapa de similitud
         bottleneck_channels = self.encoder.out_channels + 2
-        skip_channels = self.encoder.skip_channels  # ResNetEncoder fallback
+        skip_channels = self.encoder.skip_channels
 
         self.decoder = UNetDecoder(
             cfg=cfg.decoder,
@@ -83,49 +66,28 @@ class FewShotModel(nn.Module):
         support_mask: torch.Tensor,
         query_img: torch.Tensor,
     ) -> torch.Tensor:
-        """Run the full few-shot segmentation forward pass.
-
-        Args:
-            support_img:  Support image — B × 3 × H × W.
-            support_mask: Binary support mask — B × 1 × H × W.
-                          Values in {0, 1}: 1 = crack, 0 = background.
-            query_img:    Query image to segment — B × 3 × H × W.
-
-        Returns:
-            Segmentation logits — B × 1 × H × W.
-            Apply sigmoid externally for probabilities.
-        """
-        # --- Support branch -------------------------------------------------
-        # support_features["layer4"]: B × 512 × 8 × 8
+        """Forward pass completo. Devuelve logits de segmentación B × 1 × H × W."""
+        # Rama support: extrae características y calcula prototipos de grieta y fondo
         support_features = self.encoder(support_img)
-
-        # proto_crack: B × 512
-        # proto_bg:    B × 512
         proto_crack, proto_bg = self.prototype(
             support_features["layer4"],
             support_mask,
         )
 
-        # --- Query branch ---------------------------------------------------
-        # query_features["layer1"]: B × 64  × 64 × 64
-        # query_features["layer2"]: B × 128 × 32 × 32
-        # query_features["layer3"]: B × 256 × 16 × 16
-        # query_features["layer4"]: B × 512 × 8  × 8
+        # Rama query: extrae características a múltiples escalas
+        # layer1..layer3 van como skip connections al decoder
         query_features = self.encoder(query_img)
 
-        # sim_map: B × 2 × 8 × 8
+        # Mapa de similitud coseno entre query y los dos prototipos: B × 2 × H/32 × W/32
         sim_map = self.similarity(
             query_features["layer4"],
             proto_crack,
             proto_bg,
         )
 
-        # --- Decoder --------------------------------------------------------
-        # Concatenate query layer4 with similarity map to form the bottleneck.
-        # bottleneck: B × 514 × 8 × 8  (512 + 2)
+        # Bottleneck: concatenación de layer4 + sim_map
         bottleneck = torch.cat([query_features["layer4"], sim_map], dim=1)
 
-        # mask_logits: B × 1 × 256 × 256
         mask_logits = self.decoder(
             bottleneck,
             skips={

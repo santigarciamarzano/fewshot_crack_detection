@@ -1,25 +1,16 @@
 """
 models/encoders/base_encoder.py
 
-Abstract base class for all backbone encoders.
+Clase base abstracta para todos los encoders backbone.
 
-Defines the contract that every encoder must fulfill so that the rest
-of the system — PrototypeModule, SimilarityModule, UNetDecoder,
-FewShotModel — can work with any backbone without modification.
+Define el contrato que cada encoder debe cumplir para que el resto del sistema
+(PrototypeModule, SimilarityModule, UNetDecoder, FewShotModel) funcione
+con cualquier backbone sin modificaciones.
 
-Contract:
-    1. forward(x) must return a dict with keys "layer1".."layer4",
-       each mapping to the feature tensor at that scale.
-    2. out_channels must expose the number of channels in "layer4".
-
-Any class that inherits from BaseEncoder and implements these two
-things is a valid encoder for the system. Nothing else is required.
-
-Why a separate module?
-    FewShotModel should depend on this interface, not on ResNetEncoder
-    or SwinEncoder directly. This is the Dependency Inversion Principle:
-    high-level modules (FewShotModel) depend on abstractions (BaseEncoder),
-    not on concrete implementations.
+Contrato:
+    1. forward(x) debe devolver un dict con claves "layer1".."layer4",
+       cada una mapeando al tensor de features de esa escala.
+    2. out_channels debe exponer el número de canales en "layer4".
 """
 
 from abc import ABC, abstractmethod
@@ -30,54 +21,32 @@ import torch.nn as nn
 
 
 class BaseEncoder(ABC, nn.Module):
-    """Abstract base class for all backbone encoders.
+    """Clase base abstracta para todos los encoders backbone.
 
-    Subclasses must implement:
-        - forward():     extract multi-scale features from an input tensor.
-        - out_channels:  number of channels in the deepest feature map (layer4).
+    Las subclases deben implementar:
+        - forward():     extrae features multi-escala desde un tensor de entrada.
+        - out_channels:  número de canales en el mapa de features más profundo (layer4).
+        - skip_channels: canales de las skip connections, ordenados layer3 → layer2 → layer1.
 
-    Expected output format for forward():
+    Formato de salida esperado de forward():
         {
             "layer1": B × C1 × (H/4)  × (W/4),
             "layer2": B × C2 × (H/8)  × (W/8),
             "layer3": B × C3 × (H/16) × (W/16),
             "layer4": B × C4 × (H/32) × (W/32),
         }
-
-    The channel counts C1..C4 vary by backbone — the decoder reads
-    them dynamically via out_channels and skip_channels, so no
-    hardcoded values are needed anywhere else in the system.
-
-    Example (implementing a custom encoder):
-        class MyEncoder(BaseEncoder):
-            def __init__(self, cfg):
-                super().__init__()
-                # build your backbone here
-
-            @property
-            def out_channels(self) -> int:
-                return 512  # channels in layer4
-
-            def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-                # extract and return features
-                return {"layer1": f1, "layer2": f2, "layer3": f3, "layer4": f4}
     """
 
     def __init__(self) -> None:
-        # nn.Module.__init__ must be called explicitly when using multiple
-        # inheritance with ABC. ABC.__init__ is a no-op so order does not matter.
         super().__init__()
 
     @property
     @abstractmethod
     def out_channels(self) -> int:
-        """Number of channels in the layer4 (deepest) feature map.
+        """Canales en el mapa de features layer4 (más profundo).
 
-        Used by FewShotModel to compute the bottleneck size:
-            bottleneck_channels = encoder.out_channels + 2  (+ similarity map)
-
-        Returns:
-            Integer channel count for layer4 output.
+        Usado por FewShotModel para calcular el tamaño del bottleneck:
+            bottleneck_channels = encoder.out_channels + 2  (+ mapa de similitud)
         """
         ...
 

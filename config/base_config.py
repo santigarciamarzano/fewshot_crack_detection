@@ -1,12 +1,12 @@
 """
 config/base_config.py
 
-Central configuration dataclasses for the Few-Shot Segmentation framework.
+Dataclasses de configuración para el framework de segmentación few-shot.
 
-Each module of the system has its own config dataclass.
-All configs compose into a single FewShotConfig root object.
+Cada módulo del sistema tiene su propio dataclass de config.
+Todos componen en un único objeto raíz FewShotConfig.
 
-Usage:
+Uso:
     from config.base_config import FewShotConfig
     cfg = FewShotConfig()
 """
@@ -21,23 +21,19 @@ from typing import List, Literal, Optional, Tuple
 
 @dataclass
 class EncoderConfig:
-    """Configuration for the backbone encoder.
+    """Configuración del encoder backbone.
 
-    Attributes:
-        backbone: ResNet variant to use as backbone.
-            Options: "resnet18", "resnet34", "resnet50".
-        pretrained: Whether to load ImageNet pretrained weights.
-        in_channels: Number of input channels. 3 for our preprocessed
-            radiographic images (normalized, edge, high-freq).
-        frozen_layers: List of layer names to freeze during training.
-            Empty list means all layers are trainable.
-            Example: ["layer1", "layer2"] to freeze early layers.
+    Atributos:
+        backbone:       Variante de ResNet. Opciones: resnet18, resnet34, resnet50, resnet101.
+        pretrained:     Si cargar pesos preentrenados en ImageNet.
+        in_channels:    Número de canales de entrada. 3 para nuestras imágenes.
+        frozen_layers:  Capas a congelar durante el entrenamiento. Lista vacía = todas entrenables.
     """
     backbone: Literal["resnet18", "resnet34", "resnet50", "resnet101"] = "resnet34"
     pretrained: bool = True
     in_channels: int = 3
     frozen_layers: List[str] = field(default_factory=list)
-    img_size: int = 256 # Solo usado para Swin, se ignora para ResNet
+    img_size: int = 256  # solo usado para Swin, ignorado en ResNet
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +42,11 @@ class EncoderConfig:
 
 @dataclass
 class PrototypeConfig:
-    """Configuration for the prototype computation module.
+    """Configuración del módulo de cálculo de prototipos.
 
-    Attributes:
-        normalize_features: Whether to L2-normalize features before
-            computing prototypes. Strongly recommended for cosine similarity.
-        eps: Small epsilon to avoid division by zero in masked average pooling.
-            Used when a support mask is all-zero (no crack pixels).
+    Atributos:
+        normalize_features: Si normalizar features con L2 antes de calcular prototipos.
+        eps:                Epsilon para evitar división por cero en masked average pooling.
     """
     normalize_features: bool = True
     eps: float = 1e-6
@@ -64,13 +58,11 @@ class PrototypeConfig:
 
 @dataclass
 class SimilarityConfig:
-    """Configuration for the similarity computation module.
+    """Configuración del módulo de similitud.
 
-    Attributes:
-        temperature: Scaling factor applied to cosine similarities before
-            concatenation. Higher values sharpen the similarity map.
-        normalize_query: Whether to L2-normalize query features before
-            similarity computation.
+    Atributos:
+        temperature:     Factor de escala aplicado a las similitudes coseno.
+        normalize_query: Si normalizar las features de la query con L2 antes de la similitud.
     """
     temperature: float = 1.0
     normalize_query: bool = True
@@ -82,15 +74,12 @@ class SimilarityConfig:
 
 @dataclass
 class DecoderConfig:
-    """Configuration for the U-Net style decoder.
+    """Configuración del decoder estilo U-Net.
 
-    Attributes:
-        use_skip_connections: Whether to use skip connections from the
-            query encoder. Disabling this is useful for ablation studies.
-        decoder_channels: Number of channels at each decoder stage.
-            Length must match the number of upsampling stages (4).
-        dropout_rate: Dropout probability applied after each decoder block.
-            Set to 0.0 to disable.
+    Atributos:
+        use_skip_connections: Si usar skip connections del encoder de la query.
+        decoder_channels:     Canales en cada stage del decoder. Longitud fija: 4.
+        dropout_rate:         Probabilidad de dropout. 0.0 para desactivar.
     """
     use_skip_connections: bool = True
     decoder_channels: List[int] = field(
@@ -105,13 +94,12 @@ class DecoderConfig:
 
 @dataclass
 class LossConfig:
-    """Configuration for the combined Dice + BCE loss.
+    """Configuración de la loss combinada Dice + BCE.
 
-    Attributes:
-        dice_weight: Relative weight of the Dice loss component.
-        bce_weight: Relative weight of the Binary Cross-Entropy loss component.
-        dice_smooth: Smoothing factor for the Dice numerator/denominator
-            to avoid zero-division on empty masks.
+    Atributos:
+        dice_weight: Peso relativo del componente Dice.
+        bce_weight:  Peso relativo del componente BCE.
+        dice_smooth: Factor de suavizado para evitar división por cero en máscaras vacías.
     """
     dice_weight: float = 1.0
     bce_weight: float = 1.0
@@ -124,17 +112,16 @@ class LossConfig:
 
 @dataclass
 class DatasetConfig:
-    """Configuration for the episodic dataset.
+    """Configuración del dataset episódico.
 
-    Attributes:
-        data_root: Path to the root directory containing images and masks.
-        image_size: Spatial size (H, W) to resize images and masks.
-        n_way: Number of classes per episode.
-            Fixed to 1 for our binary (crack / no-crack) setting.
-        k_shot: Number of support images per episode.
-        n_query: Number of query images per episode.
-        augment_support: Whether to apply augmentation to support images.
-        augment_query: Whether to apply augmentation to query images.
+    Atributos:
+        data_root:        Ruta al directorio raíz con train/ y val/.
+        image_size:       Tamaño espacial (H, W) al que se redimensionan imágenes y máscaras.
+        n_way:            Número de clases por episodio. Fijo a 1 (binario: grieta / fondo).
+        k_shot:           Número de imágenes de support por episodio.
+        n_query:          Número de imágenes de query por episodio.
+        augment_support:  Si aplicar augmentation a las imágenes de support.
+        augment_query:    Si aplicar augmentation a las imágenes de query.
     """
     data_root: str = "data/"
     image_size: Tuple[int, int] = (256, 256)
@@ -151,21 +138,20 @@ class DatasetConfig:
 
 @dataclass
 class TrainingConfig:
-    """Configuration for the training loop.
+    """Configuración del loop de entrenamiento.
 
-    Attributes:
-        epochs: Total number of training epochs.
-        episodes_per_epoch: Number of episodes sampled per epoch.
-        batch_size: Number of episodes per gradient update.
-        learning_rate: Initial learning rate for Adam optimizer.
-        weight_decay: L2 regularization weight.
-        lr_scheduler: Learning rate scheduler type.
-            Options: "cosine", "step", "none".
-        grad_clip: Max norm for gradient clipping. None to disable.
-        device: Compute device. "cuda" or "cpu".
-        seed: Random seed for reproducibility.
-        checkpoint_dir: Directory to save model checkpoints.
-        log_every_n_episodes: Logging frequency (in episodes).
+    Atributos:
+        epochs:                  Total de épocas de entrenamiento.
+        episodes_per_epoch:      Episodios por época.
+        batch_size:              Episodios por actualización de gradiente.
+        learning_rate:           Learning rate inicial.
+        weight_decay:            Regularización L2.
+        lr_scheduler:            Tipo de scheduler. Opciones: cosine, step, none.
+        grad_clip:               Norma máxima para gradient clipping. None para desactivar.
+        device:                  Dispositivo de cómputo: cuda o cpu.
+        seed:                    Semilla aleatoria para reproducibilidad.
+        checkpoint_dir:          Directorio donde se guardan los checkpoints.
+        log_every_n_episodes:    Frecuencia de logging (en episodios).
     """
     epochs: int = 100
     episodes_per_epoch: int = 200
@@ -187,12 +173,12 @@ class TrainingConfig:
 
 @dataclass
 class FewShotConfig:
-    """Root configuration object for the entire framework.
+    """Objeto raíz de configuración para todo el framework.
 
-    All module configs are composed here.
-    Pass this object around instead of individual sub-configs.
+    Todos los sub-configs se componen aquí.
+    Pasar este objeto en vez de sub-configs individuales.
 
-    Example:
+    Ejemplo:
         cfg = FewShotConfig()
         cfg.encoder.backbone = "resnet50"
         cfg.training.epochs = 200
@@ -205,6 +191,5 @@ class FewShotConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
-    # Experiment metadata
     experiment_name: str = "baseline"
     notes: str = ""

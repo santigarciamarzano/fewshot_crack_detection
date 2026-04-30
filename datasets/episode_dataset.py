@@ -48,26 +48,15 @@ from config.base_config import DatasetConfig
 
 
 class EpisodicDataset(Dataset):
-    """Episodic dataset for 1-way K-shot few-shot segmentation.
+    """Dataset episódico para segmentación few-shot 1-way K-shot.
 
-    Each __getitem__ call samples a fresh episode: K support images and
-    1 query image, all distinct. Augmentation is applied independently
-    to support and query to avoid leaking transformation information.
+    Cada llamada a __getitem__ muestrea un episodio fresco: K imágenes de support
+    y 1 de query, siempre distintas. El augmentation se aplica de forma independiente
+    a support y query.
 
     Args:
-        cfg:   DatasetConfig with data_root, image_size, k_shot,
-               augment_support, augment_query fields.
-        split: "train" or "val" — selects the subdirectory to load from.
-
-    Example:
-        cfg = DatasetConfig(data_root="data/", k_shot=1, image_size=(256, 256))
-        dataset = EpisodicDataset(cfg, split="train")
-
-        support_imgs, support_masks, query_img, query_mask = dataset[0]
-        # support_imgs:  K × 3 × 256 × 256
-        # support_masks: K × 1 × 256 × 256
-        # query_img:     3 × 256 × 256
-        # query_mask:    1 × 256 × 256
+        cfg:   DatasetConfig con data_root, image_size, k_shot, augment_support, augment_query.
+        split: "train" o "val".
     """
 
     # Normalization divisors — use _NORM_16BIT for current TIFF pipeline.
@@ -77,22 +66,18 @@ class EpisodicDataset(Dataset):
 
     def __init__(self, cfg: DatasetConfig, split: str) -> None:
         if split not in ("train", "val"):
-            raise ValueError(
-                f"split must be 'train' or 'val', got '{split}'."
-            )
+            raise ValueError(f"split must be 'train' or 'val', got '{split}'.")
 
         self.cfg   = cfg
         self.split = split
 
-        # Resolve image and mask directories
-        root        = Path(cfg.data_root) / split
+        root          = Path(cfg.data_root) / split
         self.img_dir  = root / "images"
         self.mask_dir = root / "masks"
 
         self._validate_directories()
 
-        # Build index: list of (image_path, mask_path) pairs.
-        # Scanned once at init — no filesystem calls during training.
+        # Escaneamos el directorio una sola vez al inicio; ningún acceso a disco durante el entrenamiento
         self.samples: List[Tuple[Path, Path]] = self._build_index()
 
         if len(self.samples) < cfg.k_shot + 1:
@@ -107,49 +92,31 @@ class EpisodicDataset(Dataset):
     def __getitem__(
         self, idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Sample a fresh episode centered on idx as the query.
+        """Muestrea un episodio completo con idx como query.
 
-        The query is always the image at position idx.
-        Support images are sampled randomly from the remaining indices.
-        This ensures every image gets to be a query when iterating sequentially,
-        while support is always fresh and random.
-
-        Args:
-            idx: Index of the query image.
+        La query es siempre la imagen en la posición idx.
+        Las imágenes de support se muestrean aleatoriamente del resto.
 
         Returns:
-            Tuple of (support_imgs, support_masks, query_img, query_mask):
+            Tuple (support_imgs, support_masks, query_img, query_mask):
                 support_imgs:  K × 3 × H × W  — float32, [0, 1]
                 support_masks: K × 1 × H × W  — float32, {0.0, 1.0}
                 query_img:     3 × H × W       — float32, [0, 1]
                 query_mask:    1 × H × W       — float32, {0.0, 1.0}
         """
-        # Sample k_shot support indices, excluding the query index
         all_indices   = list(range(len(self.samples)))
         support_pool  = [i for i in all_indices if i != idx]
         support_idxs  = random.sample(support_pool, self.cfg.k_shot)
 
-        # Load query
-        query_img, query_mask = self._load_sample(
-            idx,
-            augment=self.cfg.augment_query,
-        )
-        # query_img:  3 × H × W
-        # query_mask: 1 × H × W
+        query_img, query_mask = self._load_sample(idx, augment=self.cfg.augment_query)
 
-        # Load K support images
         support_imgs  = []
         support_masks = []
-
         for s_idx in support_idxs:
-            s_img, s_mask = self._load_sample(
-                s_idx,
-                augment=self.cfg.augment_support,
-            )
-            support_imgs.append(s_img)    # 3 × H × W
-            support_masks.append(s_mask)  # 1 × H × W
+            s_img, s_mask = self._load_sample(s_idx, augment=self.cfg.augment_support)
+            support_imgs.append(s_img)
+            support_masks.append(s_mask)
 
-        # Stack along new leading dimension → K × C × H × W
         support_imgs  = torch.stack(support_imgs,  dim=0)  # K × 3 × H × W
         support_masks = torch.stack(support_masks, dim=0)  # K × 1 × H × W
 
@@ -160,50 +127,29 @@ class EpisodicDataset(Dataset):
         idx: int,
         augment: bool,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Load, resize, optionally augment, and normalize one image+mask pair.
-
-        Augmentation is applied jointly to image and mask so spatial
-        transforms remain consistent within a single sample. Support and
-        query are augmented independently from each other.
-
-        Args:
-            idx:     Index into self.samples.
-            augment: Whether to apply random augmentation.
-
-        Returns:
-            Tuple of (img_tensor, mask_tensor):
-                img_tensor:  3 × H × W — float32, [0, 1]
-                mask_tensor: 1 × H × W — float32, {0.0, 1.0}
-        """
+        """Carga, redimensiona y opcionalmente augmenta un par imagen+máscara."""
         img_path, mask_path = self.samples[idx]
 
-        # Load from disk → numpy uint16 arrays
-        img  = tifffile.imread(str(img_path))   # H × W × 3  uint16
-        mask = tifffile.imread(str(mask_path))  # H × W      uint16
+        img  = tifffile.imread(str(img_path))   # H × W × 3, uint16
+        mask = tifffile.imread(str(mask_path))  # H × W,     uint16
 
-        # Convert to float32 tensors and normalize to [0, 1]
-        # img:  3 × H × W
-        # mask: 1 × H × W
         img_tensor  = self._to_tensor_img(img)
         mask_tensor = self._to_tensor_mask(mask)
 
-        # Resize to configured spatial size
-        # Bilinear for images, nearest for masks (preserve binary values)
         h, w = self.cfg.image_size
         img_tensor  = F.interpolate(
-            img_tensor.unsqueeze(0),   # 1 × 3 × H × W
+            img_tensor.unsqueeze(0),
             size=(h, w),
             mode="bilinear",
             align_corners=False,
-        ).squeeze(0)                   # 3 × H × W
+        ).squeeze(0)
 
         mask_tensor = F.interpolate(
-            mask_tensor.unsqueeze(0),  # 1 × 1 × H × W
+            mask_tensor.unsqueeze(0),
             size=(h, w),
-            mode="nearest",
-        ).squeeze(0)                   # 1 × H × W
+            mode="nearest",  # nearest preserva valores binarios
+        ).squeeze(0)
 
-        # Apply augmentation jointly to image and mask
         if augment:
             img_tensor, mask_tensor = self._augment(img_tensor, mask_tensor)
 
@@ -242,19 +188,7 @@ class EpisodicDataset(Dataset):
         img: torch.Tensor,
         mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply random spatial augmentation jointly to image and mask.
-
-        Augmentation is intentionally conservative for radiographic images:
-        only flips, no color jitter or rotations that could corrupt features.
-        The same transform is applied to both img and mask to keep alignment.
-
-        Args:
-            img:  3 × H × W — float32
-            mask: 1 × H × W — float32
-
-        Returns:
-            Augmented (img, mask) with same shapes.
-        """
+        """Aplica augmentation espacial aleatoria de forma conjunta a imagen y máscara."""
         transform = A.Compose([
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
@@ -263,15 +197,12 @@ class EpisodicDataset(Dataset):
             A.GaussNoise(std_range=(0.008, 0.02), p=0.4),
         ])
 
-        # Convertimos de Tensor a Numpy para que Albumentations trabaje
-        img_np = img.permute(1, 2, 0).numpy()
+        img_np  = img.permute(1, 2, 0).numpy()
         mask_np = mask.permute(1, 2, 0).numpy()
 
-        # Aplicamos la transformada
         transformed = transform(image=img_np, mask=mask_np)
-        
-        # Convertimos de vuelta a Tensor de PyTorch
-        img_tensor = torch.from_numpy(transformed['image']).permute(2, 0, 1)
+
+        img_tensor  = torch.from_numpy(transformed['image']).permute(2, 0, 1)
         mask_tensor = torch.from_numpy(transformed['mask']).permute(2, 0, 1)
 
         return img_tensor, mask_tensor

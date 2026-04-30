@@ -66,26 +66,12 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def tensor_to_img(t: torch.Tensor) -> np.ndarray:
-    """Convierte tensor de imagen a array numpy RGB para matplotlib.
-
-    Args:
-        t: Tensor 3 × H × W, float32, valores en [0, 1].
-
-    Returns:
-        Array H × W × 3, float32, valores en [0, 1].
-    """
+    """Convierte tensor 3 × H × W a array H × W × 3 para matplotlib."""
     return t.permute(1, 2, 0).cpu().numpy()
 
 
 def tensor_to_mask(t: torch.Tensor) -> np.ndarray:
-    """Convierte tensor de máscara a array numpy 2D para matplotlib.
-
-    Args:
-        t: Tensor 1 × H × W, float32, valores en {0.0, 1.0}.
-
-    Returns:
-        Array H × W, float32.
-    """
+    """Convierte tensor 1 × H × W a array 2D para matplotlib."""
     return t.squeeze(0).cpu().numpy()
 
 
@@ -102,7 +88,6 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # --- Cargar checkpoint --------------------------------------------------
     print(f"Cargando checkpoint: {args.checkpoint}")
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
 
@@ -117,20 +102,15 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-
-    print(f"Modelo cargado — epoch {checkpoint['epoch']}, "
-          f"val_iou {checkpoint['val_iou']:.4f}")
+    print(f"Modelo cargado — epoch {checkpoint['epoch']}, val_iou {checkpoint['val_iou']:.4f}")
     print(f"Device: {device}")
 
-    # --- Cargar dataset val -------------------------------------------------
     dataset_cls = EpisodicDatasetPNG if args.format == "png" else EpisodicDataset
     dataset = dataset_cls(cfg.dataset, split="val")
-
     n_episodes = min(args.n_episodes, len(dataset))
     indices = random.sample(range(len(dataset)), n_episodes)
     print(f"Visualizando {n_episodes} episodios del val set ({args.format})")
 
-    # --- Construir grilla ---------------------------------------------------
     # 4 columnas: support | query | ground truth | prediction
     n_cols = 4
     fig, axes = plt.subplots(
@@ -138,9 +118,8 @@ def main() -> None:
         figsize=(n_cols * 3, n_episodes * 3),
     )
 
-    # Garantizar que axes sea siempre 2D aunque n_episodes=1
     if n_episodes == 1:
-        axes = axes[np.newaxis, :]
+        axes = axes[np.newaxis, :]  # garantizar que axes sea siempre 2D
 
     col_titles = ["Support", "Query", "Ground Truth", "Prediction"]
     for col, title in enumerate(col_titles):
@@ -148,27 +127,17 @@ def main() -> None:
 
     with torch.no_grad():
         for row, idx in enumerate(indices):
-            # support_imgs:  K × 3 × H × W
-            # support_masks: K × 1 × H × W
-            # query_img:     3 × H × W
-            # query_mask:    1 × H × W
             support_imgs, support_masks, query_img, query_mask = dataset[idx]
+            # support_imgs:  K × 3 × H × W
+            # query_img:     3 × H × W
 
-            # Squeeze K dim — baseline k_shot=1
-            # support_img:  3 × H × W
-            # support_mask: 1 × H × W
             support_img  = support_imgs[0].unsqueeze(0).to(device)   # 1 × 3 × H × W
             support_mask = support_masks[0].unsqueeze(0).to(device)  # 1 × 1 × H × W
             query_input  = query_img.unsqueeze(0).to(device)         # 1 × 3 × H × W
 
-            # logits: 1 × 1 × H × W
-            logits = model(support_img, support_mask, query_input)
+            logits = model(support_img, support_mask, query_input)   # 1 × 1 × H × W
+            pred   = (torch.sigmoid(logits) > args.threshold).float().squeeze()
 
-            # pred: H × W, valores {0, 1}
-            pred = (torch.sigmoid(logits) > args.threshold).float().squeeze()
-
-            # --- Dibujar fila -----------------------------------------------
-            # Col 0: support image
             axes[row, 0].imshow(tensor_to_img(support_imgs[0]), cmap="gray")
             axes[row, 0].contourf(
                 tensor_to_mask(support_masks[0]),
@@ -176,20 +145,11 @@ def main() -> None:
                 colors=["red"],
                 alpha=0.35,
             )
-
-            # Col 1: query image
             axes[row, 1].imshow(tensor_to_img(query_img), cmap="gray")
-
-            # Col 2: ground truth mask
             axes[row, 2].imshow(tensor_to_mask(query_mask), cmap="hot", vmin=0, vmax=1)
-
-            # Col 3: predicted mask
             axes[row, 3].imshow(pred.cpu().numpy(), cmap="hot", vmin=0, vmax=1)
 
-            # Etiqueta de fila con el índice del episodio
             axes[row, 0].set_ylabel(f"ep {idx}", fontsize=9)
-
-            # Quitar ejes en todas las celdas
             for col in range(n_cols):
                 axes[row, col].set_xticks([])
                 axes[row, col].set_yticks([])

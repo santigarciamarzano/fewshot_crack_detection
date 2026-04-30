@@ -48,7 +48,7 @@ def main():
     
     count = 0
     for mask_path in mask_paths:
-        # Buscar la imagen correspondiente (probamos varias extensiones por si acaso)
+        # Buscamos la imagen correspondiente probando varias extensiones
         img_path = src_imgs / mask_path.name
         if not img_path.exists():
             img_path = src_imgs / (mask_path.stem + ".png")
@@ -66,16 +66,13 @@ def main():
         if mask is None or img is None:
             continue
 
-        # Si la imagen tiene 1 canal (escala de grises), la pasamos a 3 canales para guardarla como RGB
         if len(img.shape) == 2:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-        # Si es BGR (OpenCV por defecto), la pasamos a RGB
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)  # escala de grises → RGB
         elif len(img.shape) == 3 and img.shape[2] == 3:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)   # BGR (OpenCV por defecto) → RGB
 
-        # Si la máscara tiene varios canales (ej. RGBA), nos quedamos solo con el primero
         if len(mask.shape) > 2:
-            mask = mask[:, :, 0]
+            mask = mask[:, :, 0]  # si la máscara tiene varios canales (ej. RGBA), nos quedamos con el primero
 
         # Binarizar la máscara de forma segura para OpenCV (0 y 1)
         binary_mask = (mask > 0).astype(np.uint8)
@@ -85,27 +82,21 @@ def main():
             continue
 
         H, W = binary_mask.shape
-
-        # Encontrar grietas distintas
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
 
-        # Iterar sobre las grietas (el label 0 es el fondo, empezamos en 1)
-        for i in range(1, num_labels):
+        for i in range(1, num_labels):  # el label 0 es el fondo
             cx, cy = centroids[i]
-            
+
             y0, y1 = get_valid_crop(cy, H, args.size)
             x0, x1 = get_valid_crop(cx, W, args.size)
 
             img_patch = img[y0:y1, x0:x1]
-            mask_patch = binary_mask[y0:y1, x0:x1] * 255 # Lo pasamos a 255 para que se vea bien al guardarlo
+            mask_patch = binary_mask[y0:y1, x0:x1] * 255
 
-            # Guardar con OpenCV
             patch_name = f"{mask_path.stem}_crack{i}.png"
-            
-            # OpenCV guarda en BGR, así que lo volvemos a invertir antes de guardar
-            cv2.imwrite(str(img_out / patch_name), cv2.cvtColor(img_patch, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(str(img_out / patch_name), cv2.cvtColor(img_patch, cv2.COLOR_RGB2BGR))  # OpenCV guarda en BGR
             cv2.imwrite(str(mask_out / patch_name), mask_patch)
-            
+
             count += 1
 
     print(f"\n¡Listo! Se generaron {count} parches perfectos en '{args.dst}'.")

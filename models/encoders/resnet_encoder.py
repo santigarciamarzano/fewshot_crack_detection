@@ -1,18 +1,15 @@
 """
 models/encoders/resnet_encoder.py
 
-ResNet backbone wrapper for feature extraction at multiple scales.
+Wrapper de backbone ResNet para extraer features a múltiples escalas.
 
-The encoder wraps a torchvision ResNet and exposes intermediate feature maps
-from all four residual blocks. These features are used in two ways:
+Expone los mapas de features intermedios de los cuatro bloques residuales:
+    - layer4 (más profundo) → cálculo de prototipos en la rama few-shot
+    - layer1..layer3         → skip connections en el decoder U-Net
 
-    - layer4 (deepest) → prototype computation in the few-shot branch
-    - layer1..layer3   → skip connections in the U-Net decoder
+El mismo encoder se comparte (Siamés) entre support y query.
 
-The same encoder instance is shared (Siamese) between support and query:
-    both images pass through the same weights.
-
-Shapes (with input 3 × 256 × 256):
+Shapes (con entrada 3 × 256 × 256):
     layer1: B × 64  × 64 × 64
     layer2: B × 128 × 32 × 32
     layer3: B × 256 × 16 × 16
@@ -61,24 +58,12 @@ _RESNET_SKIP_CHANNELS: Dict[str, List[int]] = {
 
 
 class ResNetEncoder(BaseEncoder):
-    """Multi-scale ResNet encoder for few-shot segmentation.
- 
-    Wraps a torchvision ResNet and extracts feature maps at four scales.
-    The first convolution layer is replaced to accept `in_channels` input
-    (default 3 for our preprocessed radiographic images).
- 
-    Inherits from BaseEncoder — fulfills the contract by implementing
-    forward() and the out_channels property.
- 
+    """Encoder ResNet multi-escala para segmentación few-shot.
+
+    Extrae mapas de features en cuatro escalas y opcionalmente congela capas.
+
     Args:
-        cfg: EncoderConfig with backbone, pretrained, in_channels,
-             and frozen_layers fields.
- 
-    Example:
-        cfg = EncoderConfig(backbone="resnet34", pretrained=True, in_channels=3)
-        encoder = ResNetEncoder(cfg)
-        features = encoder(x)          # x: B × 3 × 256 × 256
-        features["layer4"]             # B × 512 × 8 × 8
+        cfg: EncoderConfig con backbone, pretrained, in_channels y frozen_layers.
     """
 
     def __init__(self, cfg: EncoderConfig) -> None:
@@ -91,40 +76,26 @@ class ResNetEncoder(BaseEncoder):
             )
 
         constructor, weights = _BACKBONE_REGISTRY[cfg.backbone]
+        backbone = constructor(weights=weights if cfg.pretrained else None)
 
-        # Load backbone (with or without pretrained weights)
-        weights = weights if cfg.pretrained else None
-        backbone = constructor(weights=weights)
-
-        # Replace the first conv if in_channels != 3.
-        # We preserve kernel_size, stride and padding so spatial dims are
-        # identical to the standard ResNet stem.
         if cfg.in_channels != 3:
+            # Reemplazamos la primera conv preservando kernel, stride y padding
             backbone.conv1 = nn.Conv2d(
-                cfg.in_channels,
-                64,
-                kernel_size=7,
-                stride=2,
-                padding=3,
-                bias=False,
+                cfg.in_channels, 64,
+                kernel_size=7, stride=2, padding=3, bias=False,
             )
 
-        # Extract the stem and the four residual blocks.
-        # We discard avgpool and fc (classification head).
+        # Extraemos el stem y los cuatro bloques residuales; descartamos avgpool y fc
         self.stem = nn.Sequential(
-            backbone.conv1,
-            backbone.bn1,
-            backbone.relu,
-            backbone.maxpool,
+            backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool,
         )
-        self.layer1 = backbone.layer1  # 64 channels,  stride 4 from input
-        self.layer2 = backbone.layer2  # 128 channels, stride 8
-        self.layer3 = backbone.layer3  # 256 channels, stride 16
-        self.layer4 = backbone.layer4  # 512/2048 ch,  stride 32
+        self.layer1 = backbone.layer1  # 64 ch,       stride 4
+        self.layer2 = backbone.layer2  # 128 ch,      stride 8
+        self.layer3 = backbone.layer3  # 256 ch,      stride 16
+        self.layer4 = backbone.layer4  # 512/2048 ch, stride 32
 
         self._out_channels = BACKBONE_OUT_CHANNELS[cfg.backbone]
         self._backbone_name = cfg.backbone
-        # Freeze requested layers
         self._freeze_layers(cfg.frozen_layers)
 
     # ------------------------------------------------------------------
@@ -133,12 +104,7 @@ class ResNetEncoder(BaseEncoder):
 
     @property
     def out_channels(self) -> int:
-        """Number of channels in layer4 output.
- 
-        Returns:
-            512  for ResNet18/34
-            2048 for ResNet50/101
-        """
+        """Canales en la salida de layer4: 512 para ResNet18/34, 2048 para ResNet50/101."""
         return self._out_channels
     
     @property
@@ -146,45 +112,16 @@ class ResNetEncoder(BaseEncoder):
         return _RESNET_SKIP_CHANNELS[self._backbone_name]
     
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Extract multi-scale features from input image tensor.
-
-        Args:
-            x: Input tensor of shape B × C × H × W.
-
-        Returns:
-            Dictionary with keys "layer1" … "layer4", each mapping to
-            the corresponding feature tensor:
-                "layer1": B × 64  × (H/4)  × (W/4)
-                "layer2": B × 128 × (H/8)  × (W/8)
-                "layer3": B × 256 × (H/16) × (W/16)
-                "layer4": B × 512 × (H/32) × (W/32)   [ResNet18/34]
-                          B × 2048 × (H/32) × (W/32)  [ResNet50]
-        """
-        x = self.stem(x)        # B × 64 × H/4  × W/4
-
-        f1 = self.layer1(x)     # B × 64  × H/4  × W/4
-        f2 = self.layer2(f1)    # B × 128 × H/8  × W/8
-        f3 = self.layer3(f2)    # B × 256 × H/16 × W/16
-        f4 = self.layer4(f3)    # B × 512 × H/32 × W/32
-
-        return {
-            "layer1": f1,
-            "layer2": f2,
-            "layer3": f3,
-            "layer4": f4,
-        }
+        """Extrae features multi-escala. Devuelve dict con keys layer1..layer4."""
+        x  = self.stem(x)    # B × 64  × H/4  × W/4
+        f1 = self.layer1(x)  # B × 64  × H/4  × W/4
+        f2 = self.layer2(f1) # B × 128 × H/8  × W/8
+        f3 = self.layer3(f2) # B × 256 × H/16 × W/16
+        f4 = self.layer4(f3) # B × 512 × H/32 × W/32
+        return {"layer1": f1, "layer2": f2, "layer3": f3, "layer4": f4}
 
     def _freeze_layers(self, layer_names: list[str]) -> None:
-        """Freeze parameters in the specified layers.
-
-        Frozen parameters are excluded from gradient computation and will
-        not be updated during training. Useful for fine-tuning experiments
-        where we want to keep early layers fixed.
-
-        Args:
-            layer_names: List of attribute names to freeze.
-                Valid values: "stem", "layer1", "layer2", "layer3", "layer4".
-        """
+        """Congela los parámetros de las capas indicadas (excluye de backprop)."""
         for name in layer_names:
             module = getattr(self, name, None)
             if module is None:
